@@ -411,6 +411,19 @@ def fetch_episode(ep_id, slug):
     }
 
 
+def parse_episode_range(range_str):
+    """Parse episode range string like '1-10', '5,10,15', or '1-5,10,20-25'"""
+    episodes = set()
+    for part in range_str.split(','):
+        part = part.strip()
+        if '-' in part:
+            start, end = part.split('-', 1)
+            episodes.update(range(int(start), int(end) + 1))
+        else:
+            episodes.add(int(part))
+    return episodes
+
+
 def unwrap_video_url(url):
     """Unwrap video URL from wrapper services like strema.top"""
     # Handle strema.top/embed2/?id=<encoded_url>
@@ -557,6 +570,8 @@ def main():
                        help="Comma-separated list of servers to try first (e.g., krakenfiles,uqload)")
     parser.add_argument("--skip-servers", type=str,
                        help="Comma-separated list of servers to skip (e.g., lulustream,darkibox)")
+    parser.add_argument("--episodes", "-e", type=str,
+                       help="Episodes to download (e.g., 1-10, 5,10,15, or 1-5,10,20-25)")
 
     args = parser.parse_args()
 
@@ -622,6 +637,17 @@ def main():
         return (999, x['post_id'])
 
     results.sort(key=sort_key)
+
+    # Filter by episode range if specified
+    if args.episodes:
+        wanted = parse_episode_range(args.episodes)
+        filtered = []
+        for ep in results:
+            match = re.match(r'S(\d+)E(\d+)', ep['episode'])
+            if match and int(match.group(2)) in wanted:
+                filtered.append(ep)
+        print(f"  Filtered to {len(filtered)} episodes (from {len(results)})", file=sys.stderr)
+        results = filtered
 
     # Download if requested
     if args.download:
