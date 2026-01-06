@@ -1,0 +1,10 @@
+[project]
+name = "stardima-extract"
+version = "0.1.0"
+dependencies = [
+    "requests",
+    "yt-dlp",
+]
+
+[project.scripts]
+stardima-extract = "stardima-extract:main"

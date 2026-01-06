@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
 StarDima Video URL Extractor
-Usage: python3 stardima-extract.py <show_url> [output_format]
+Usage: python3 stardima-extract.py <show_url> [output_format] [options]
 Examples:
   python3 stardima-extract.py "https://watch.stardima.com/watch/tvshows/witch/" json
   python3 stardima-extract.py "https://www.stardima.com/tvshow/693fcadf20e3a/play/56876"
+  python3 stardima-extract.py "https://www.stardima.com/tvshow/693fcadf20e3a/play/56876" --download
+  python3 stardima-extract.py "https://www.stardima.com/tvshow/693fcadf20e3a/play/56876" -d -o ~/Videos
 """
 
 import sys
@@ -14,15 +16,11 @@ import html
 import base64
 import urllib.parse
 import argparse
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-try:
-    import requests
-except ImportError:
-    print("Installing requests...")
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "requests", "-q"])
-    import requests
+import requests
+import yt_dlp
 
 # Old watch.stardima.com endpoints
 BASE_URL = "https://watch.stardima.com/watch"
@@ -413,6 +411,79 @@ def fetch_episode(ep_id, slug):
     }
 
 
+def unwrap_video_url(url):
+    """Unwrap video URL from wrapper services like strema.top"""
+    # Handle strema.top/embed2/?id=<encoded_url>
+    if "strema.top/embed" in url and "id=" in url:
+        match = re.search(r'[?&]id=([^&]+)', url)
+        if match:
+            return urllib.parse.unquote(match.group(1))
+    return url
+
+
+def download_episode(episode_data, show_title, output_dir, preferred_servers=None, skip_servers=None):
+    """Download a single episode using yt-dlp, trying servers until one succeeds"""
+    ep_name = episode_data["episode"]
+    servers = episode_data.get("servers", {})
+
+    # Filter out None/empty URLs
+    valid_urls = [(name, url) for name, url in servers.items() if url]
+
+    # Apply server filters
+    if skip_servers:
+        skip_set = set(s.lower() for s in skip_servers)
+        valid_urls = [(name, url) for name, url in valid_urls if name.lower() not in skip_set]
+
+    # Sort by preferred servers
+    if preferred_servers:
+        pref_order = {s.lower(): i for i, s in enumerate(preferred_servers)}
+        valid_urls.sort(key=lambda x: pref_order.get(x[0].lower(), 999))
+
+    if not valid_urls:
+        print(f"  \033[31m✗ {ep_name}: No valid URLs found\033[0m", file=sys.stderr)
+        return False
+
+    # Sanitize show title for filename
+    safe_title = re.sub(r'[<>:"/\\|?*]', '_', show_title)
+    output_path = os.path.join(output_dir, safe_title)
+    os.makedirs(output_path, exist_ok=True)
+    output_template = os.path.join(output_path, f"{ep_name}.%(ext)s")
+
+    for server_name, url in valid_urls:
+        # Unwrap wrapper URLs
+        actual_url = unwrap_video_url(url)
+
+        # Extract domain for referer
+        domain_match = re.match(r'(https?://[^/]+)', actual_url)
+        referer = domain_match.group(1) + "/" if domain_match else ""
+
+        ydl_opts = {
+            'format': 'bestvideo+bestaudio/best',
+            'merge_output_format': 'mp4',
+            'outtmpl': output_template,
+            'quiet': True,
+            'no_warnings': True,
+            'progress_hooks': [lambda d: None],  # Suppress progress
+            'http_headers': {
+                'Referer': referer,
+                'Origin': referer.rstrip('/'),
+            },
+        }
+
+        print(f"  \033[34m→ {ep_name}: Trying {server_name}...\033[0m", file=sys.stderr)
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([actual_url])
+            print(f"  \033[32m✓ {ep_name}: Downloaded successfully\033[0m", file=sys.stderr)
+            return True
+        except Exception as e:
+            print(f"  \033[33m⚠ {ep_name}: Failed on {server_name} ({e})\033[0m", file=sys.stderr)
+
+    print(f"  \033[31m✗ {ep_name}: All servers failed\033[0m", file=sys.stderr)
+    return False
+
+
 def process_new_stardima(show_id, ep_id, args):
     """Process new www.stardima.com URLs"""
     print(f"\033[34mExtracting from new stardima: \033[33m{show_id}\033[0m", file=sys.stderr)
@@ -476,6 +547,16 @@ def main():
                        help="Output format (default: table)")
     parser.add_argument("--workers", "-w", type=int, default=10,
                        help="Number of parallel workers (default: 10)")
+    parser.add_argument("--download", "-d", action="store_true",
+                       help="Download episodes using yt-dlp (best quality)")
+    parser.add_argument("--output-dir", "-o", type=str, default=".",
+                       help="Output directory for downloads (default: current directory)")
+    parser.add_argument("--parallel-downloads", "-p", type=int, default=3,
+                       help="Number of parallel downloads (default: 3)")
+    parser.add_argument("--prefer-servers", type=str,
+                       help="Comma-separated list of servers to try first (e.g., krakenfiles,uqload)")
+    parser.add_argument("--skip-servers", type=str,
+                       help="Comma-separated list of servers to skip (e.g., lulustream,darkibox)")
 
     args = parser.parse_args()
 
@@ -541,6 +622,32 @@ def main():
         return (999, x['post_id'])
 
     results.sort(key=sort_key)
+
+    # Download if requested
+    if args.download:
+        preferred = args.prefer_servers.split(",") if args.prefer_servers else None
+        skip = args.skip_servers.split(",") if args.skip_servers else None
+
+        print(f"\033[34m[4/4] Downloading {len(results)} episodes ({args.parallel_downloads} parallel)...\033[0m", file=sys.stderr)
+        if preferred:
+            print(f"  Preferred servers: {', '.join(preferred)}", file=sys.stderr)
+        if skip:
+            print(f"  Skipping servers: {', '.join(skip)}", file=sys.stderr)
+        print("", file=sys.stderr)
+
+        success_count = 0
+
+        with ThreadPoolExecutor(max_workers=args.parallel_downloads) as executor:
+            futures = {
+                executor.submit(download_episode, ep, show["title"], args.output_dir, preferred, skip): ep
+                for ep in results
+            }
+            for future in as_completed(futures):
+                if future.result():
+                    success_count += 1
+
+        print(f"\n\033[32mDownloaded {success_count}/{len(results)} episodes.\033[0m", file=sys.stderr)
+        return
 
     # Output
     print("\033[34m[4/4] Generating output...\033[0m\n", file=sys.stderr)
