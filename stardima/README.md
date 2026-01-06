@@ -1,34 +1,42 @@
 # StarDima Video URL Extractor
 
-Extracts video streaming URLs from StarDima for all episodes of a show.
+Extracts video streaming URLs from StarDima and optionally downloads episodes using yt-dlp.
 
 ## Features
 
 - Supports both `www.stardima.com` and `watch.stardima.com` URLs
-- Extracts multiple server sources (Uqload, Streamhg, Darkibox, etc.)
-- Parallel fetching for faster extraction
+- Extracts multiple server sources (Krakenfiles, Lulustream, Uqload, etc.)
+- Download episodes with yt-dlp (best quality)
+- Parallel fetching and downloading
 - Multiple output formats (table, JSON, CSV)
+- Server prioritization and filtering
 
 ## Installation
 
 ```bash
-pip install requests
+uv sync
 ```
 
 ## Usage
 
 ```bash
 # Basic usage - table output
-python3 stardima-extract.py "https://www.stardima.com/tvshow/693fcadf20e3a/play/56876"
+uv run python stardima-extract.py "https://www.stardima.com/tvshow/693fcadf20e3a/play/56876"
 
 # JSON output
-python3 stardima-extract.py "https://www.stardima.com/tvshow/693fcadf20e3a/play/56876" json
+uv run python stardima-extract.py "https://www.stardima.com/tvshow/693fcadf20e3a/play/56876" json
 
 # CSV output
-python3 stardima-extract.py "https://www.stardima.com/tvshow/693fcadf20e3a/play/56876" csv
+uv run python stardima-extract.py "https://www.stardima.com/tvshow/693fcadf20e3a/play/56876" csv
 
-# Old site format
-python3 stardima-extract.py "https://watch.stardima.com/watch/tvshows/witch/" json
+# Download all episodes
+uv run python stardima-extract.py "https://www.stardima.com/tvshow/693fcadf20e3a/play/56876" -d
+
+# Download to specific directory with preferred servers
+uv run python stardima-extract.py "https://www.stardima.com/tvshow/693fcadf20e3a/play/56876" -d -o ~/Videos --prefer-servers krakenfiles,lulustream
+
+# Skip unreliable servers
+uv run python stardima-extract.py "https://www.stardima.com/tvshow/693fcadf20e3a/play/56876" -d --skip-servers uqload,darkibox
 ```
 
 ## Options
@@ -37,7 +45,12 @@ python3 stardima-extract.py "https://watch.stardima.com/watch/tvshows/witch/" js
 |----------|-------------|
 | `url` | Show or episode URL |
 | `format` | Output format: `table` (default), `json`, `csv` |
-| `-w, --workers` | Number of parallel workers (default: 10) |
+| `-w, --workers` | Number of parallel workers for URL extraction (default: 10) |
+| `-d, --download` | Download episodes using yt-dlp |
+| `-o, --output-dir` | Output directory for downloads (default: current directory) |
+| `-p, --parallel-downloads` | Number of parallel downloads (default: 3) |
+| `--prefer-servers` | Comma-separated list of servers to try first |
+| `--skip-servers` | Comma-separated list of servers to skip |
 
 ## Output Example
 
